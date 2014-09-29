@@ -1,0 +1,120 @@
+NAME
+    `Device::BusPirate::Chip::AVR_HVSP' - high-voltage serial programming
+    for AVR chips
+
+DESCRIPTION
+    This Device::BusPirate::Chip subclass allows interaction with an AVR
+    microcontroller of the ATtiny family in high-voltage serial programming
+    (HVSP) mode. It is particularly useful for configuring fuses or working
+    with a chip with the `RSTDISBL' fuse programmed, because in such cases a
+    regular ISP programmer cannot be used.
+
+  CONNECTIONS
+    To use this module, make the following connections between the Bus
+    Pirate (with colours of common cable types), and the ATtiny chip (with
+    example pin numbers for some common devices):
+
+      Bus Pirate | Sparkfun | Seeed    |:| ATtiny | tiny84 | tiny85
+      -----------+----------+----------+-+--------+--------+-------
+      MISO       | brown    | black    |:|    SDO |      9 |      7
+      CS         | red      | white    |:|    SII |      8 |      6
+      MOSI       | orange   | grey     |:|    SDI |      7 |      5
+      CLK        | yellow   | purple   |:|    SCI |      2 |      2
+      AUX        | green    | blue     |:| +12V supply - see below
+                 |          |          |:|  RESET |      4 |      1
+      +5V        | grey     | orange   |:|    Vcc |      1 |      8
+      GND        | black    | brown    |:|    GND |     14 |      4
+
+    The `AUX' line from the Bus Pirate will need to be able to control a
+    +12V supply to the `RESET' pin of the ATtiny chip. It should be
+    active-high, and can be achieved by a two-stage NPN-then-PNP transistor
+    arrangement.
+
+    Additionally, the `SDO' pin and the `PA0' to `PA2' pins of 14-pin
+    devices will need a pull-down to ground of around 100Ohm to 1kOhm.
+
+METHODS
+    The following methods documented with a trailing call to `->get' return
+    Future instances.
+
+  $chip->start->get
+    Powers up the device, reads and checks the signature, ensuring it is a
+    recognised chip.
+
+  $chip->stop->get
+    Shut down power to the device.
+
+  $name = $chip->partname
+    Returns the name of the chip whose signature was detected by the `start'
+    method.
+
+  $avr->chip_erase->get
+    Performs an entire chip erase. This will clear the flash and EEPROM
+    memories, before resetting the lock bits. It does not affect the fuses.
+
+  $bytes = $avr->read_signature->get
+    Reads the three device signature bytes and returns them in as a single
+    binary string.
+
+  $byte = $avr->read_calibration->get
+    Reads the calibration byte.
+
+  $byte = $avr->read_lock->get
+    Reads the lock byte.
+
+  $avr->write_lock( $byte )->get
+    Writes the lock byte.
+
+  $int = $avr->read_fuse_byte( $fuse )->get
+    Reads one of the fuse bytes `lfuse', `hfuse', `efuse', returning an
+    integer.
+
+  $avr->write_fuse_byte( $fuse, $byte )->get
+    Writes one of the fuse bytes `lfuse', `hfuse', `efuse' from an integer.
+
+  $byte = $avr->read_lfuse->get
+  $byte = $avr->read_hfuse->get
+  $byte = $avr->read_efuse->get
+    Convenient shortcuts to reading the low, high and extended fuses
+    directly, returning a byte.
+
+  $avr->write_lfuse( $byte )->get
+  $avr->write_hfuse( $byte )->get
+  $avr->write_efuse( $byte )->get
+    Convenient shortcuts for writing the low, high and extended fuses
+    directly, from a byte.
+
+  $bytes = $avr->read_flash( %args )->get
+    Reads a range of the flash memory and returns it as a binary string.
+
+    Takes the following optional arguments:
+
+    start => INT
+    stop => INT
+        Address range to read. If omitted, reads the entire memory.
+
+    bytes => INT
+        Alternative to `stop'; gives the nubmer of bytes (i.e. not words of
+        flash) to read.
+
+  $avr->write_flash( $bytes )->get
+    Writes the flash memory from the binary string.
+
+  $bytes = $avr->read_eeprom( %args )->get
+    Reads a range of the EEPROM memory and returns it as a binary string.
+
+    Takes the following optional arguments:
+
+    start => INT
+    stop => INT
+        Address range to read. If omitted, reads the entire memory.
+
+    bytes => INT
+        Alternative to `stop'; gives the nubmer of bytes to read.
+
+  $avr->write_eeprom( $bytes )->get
+    Writes the EEPROM memory from the binary string.
+
+AUTHOR
+    Paul Evans <leonerd@leonerd.org.uk>
+

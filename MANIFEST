@@ -1,0 +1,12 @@
+Build.PL
+examples/avr_hvsp.pl
+examples/tinyfuse.pl
+lib/Device/BusPirate/Chip/AVR_HVSP.pm
+MANIFEST			This list of files
+t/00use.t
+t/99pod.t
+Makefile.PL
+README
+LICENSE
+META.yml
+META.json
