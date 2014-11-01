@@ -21,14 +21,15 @@
       },
       "runtime" : {
          "requires" : {
-            "Device::BusPirate::Chip" : "0"
+            "Device::BusPirate::Chip" : "0",
+            "Struct::Dumb" : "0"
          }
       }
    },
    "provides" : {
       "Device::BusPirate::Chip::AVR_HVSP" : {
          "file" : "lib/Device/BusPirate/Chip/AVR_HVSP.pm",
-         "version" : "0.01"
+         "version" : "0.02"
       }
    },
    "release_status" : "stable",
@@ -37,5 +38,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "0.01"
+   "version" : "0.02"
 }

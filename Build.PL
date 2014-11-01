@@ -7,6 +7,7 @@ my $build = Module::Build->new(
    module_name => 'Device::BusPirate::Chip::AVR_HVSP',
    requires => {
       'Device::BusPirate::Chip' => 0,
+      'Struct::Dumb' => 0,
    },
    build_requires => {
       'Test::More' => '0.88', # done_testing

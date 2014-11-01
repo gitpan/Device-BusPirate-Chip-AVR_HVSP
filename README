@@ -48,6 +48,35 @@ METHODS
     Returns the name of the chip whose signature was detected by the `start'
     method.
 
+  $memory = $avr->memory_info( $name )
+    Returns a memory info structure giving details about the named memory
+    for the attached part. The following memory names are recognised:
+
+     signature calibration lock lfuse hfuse efuse flash eeprom
+
+    (Note that the ATtiny13 has no `efuse' memory).
+
+    The structure will respond to the following methods:
+
+    * wordsize
+        Returns number of bits per word. This will be 8 for the
+        byte-oriented memories, but 16 for the main program flash.
+
+    * pagesize
+        Returns the number of words per page; the smallest amount that can
+        be written in one go.
+
+    * words
+        Returns the total number of words that are available.
+
+    * can_write
+        Returns true if the memory type can be written (in general; this
+        does not take into account the lock bits that might futher restrict
+        a particular chip).
+
+  %memories = $avr->memory_infos
+    Returns a key/value list of all the known device memories.
+
   $avr->chip_erase->get
     Performs an entire chip erase. This will clear the flash and EEPROM
     memories, before resetting the lock bits. It does not affect the fuses.
@@ -114,6 +143,11 @@ METHODS
 
   $avr->write_eeprom( $bytes )->get
     Writes the EEPROM memory from the binary string.
+
+SEE ALSO
+    *   http://dangerousprototypes.com/2014/10/27/high-voltage-serial-progra
+        mming-for-avr-chips-with-the-bus-pirate/ - High voltage serial
+        programming for AVR chips with the Bus Pirate.
 
 AUTHOR
     Paul Evans <leonerd@leonerd.org.uk>

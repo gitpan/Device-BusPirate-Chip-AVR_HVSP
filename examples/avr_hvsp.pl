@@ -5,6 +5,7 @@ use warnings;
 
 use Device::BusPirate;
 use Getopt::Long;
+use List::Util 1.29 qw( pairs pairkeys );
 use Time::HiRes qw( sleep );
 
 use Future::Utils qw( repeat );
@@ -35,6 +36,7 @@ GetOptions(
 
       push @MEMOPS, [ $memory, $op, $handler ];
    },
+   'v|verbose+'     => \my $VERBOSE,
    'e|erase'        => \my $CHIP_ERASE,
    'n|no-write'     => \my $NO_WRITE,
    'D|no-autoerase' => \my $NO_AUTOERASE,
@@ -55,10 +57,25 @@ $avr->start->get;
 
 print "Recognised part: $avr->{part}\n";
 
+if( $VERBOSE ) {
+   print "Memories:\n";
+   printf "%-20s | %6s | %5s | %5s\n", "Name", "bits/w", "words", "bytes";
+
+   foreach ( pairs $avr->memory_infos ) {
+      my ( $name, $mem ) = @$_;
+
+      printf "  %-16s%2s | %6s | %5s | %5s\n",
+         $name, $mem->can_write ? "WR" : "RO", $mem->wordsize, $mem->words, $mem->wordsize * $mem->words / 8;
+   }
+}
+
 if( $BACKUP_ALL ) {
    my $outfile = main::Fileformat::IntelHex->open_out( $BACKUP_ALL );
 
-   foreach my $memory (qw( lfuse hfuse efuse flash eeprom lock )) {
+   # Lock has to be restored last
+   foreach my $memory ( ( grep { $_ ne "lock" } pairkeys $avr->memory_infos ), "lock" ) {
+      next unless $avr->memory_info( $memory )->can_write;
+
       $outfile->print( "#MEM $memory\n" );
       read_memory( $memory, $outfile );
    }
@@ -115,7 +132,10 @@ sub read_memory
 {
    my ( $memory, $handler ) = @_;
 
-   print "Reading $memory...\n";
+   my $info = $avr->memory_info( $memory );
+   my $bytes = $info->words * $info->wordsize / 8;
+
+   print "Reading $memory ($bytes bytes)...\n";
    my $data = $avr->${\"read_$memory"}->get;
 
    $handler->output( $data );
@@ -126,6 +146,9 @@ sub write_memory
    my ( $memory, $handler ) = @_;
    die "Cannot write $memory when in no-write mode\n" if $NO_WRITE;
 
+   my $info = $avr->memory_info( $memory );
+   my $bytes = $info->words * $info->wordsize / 8;
+
    my $data = $handler->input;
 
    if( $memory eq "eeprom" || $memory eq "flash" and !$erased and !$NO_AUTOERASE ) {
@@ -134,7 +157,7 @@ sub write_memory
       $erased++;
    }
 
-   print "Writing $memory...\n";
+   print "Writing $memory ($bytes bytes)...\n";
    $avr->${\"write_$memory"}( $data )->get;
 
    return verify_memory( $memory, undef, $data );

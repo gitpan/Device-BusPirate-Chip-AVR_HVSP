@@ -9,14 +9,18 @@ use strict;
 use warnings;
 use base qw( Device::BusPirate::Chip );
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Carp;
 
 use Future::Utils qw( repeat );
+use Struct::Dumb qw( readonly_struct );
 
 use constant CHIP => "AVR_HVSP";
 use constant MODE => "BB";
+
+readonly_struct PartInfo   => [qw( signature flash_words flash_pagesize eeprom_words eeprom_pagesize has_efuse )];
+readonly_struct MemoryInfo => [qw( wordsize pagesize words can_write )];
 
 =head1 NAME
 
@@ -116,29 +120,59 @@ recognised chip.
 
 =cut
 
-my %SIGNATURES = (
-   ATtiny24 => "1E910B",
-   ATtiny44 => "1E9207",
-   ATtiny84 => "1E930C",
+my %PARTS = (
+   #                     Sig       Flash sz  Eeprom sz  EF
+   ATtiny24 => PartInfo( "1E910B", 1024, 16,   128, 4,  1 ),
+   ATtiny44 => PartInfo( "1E9207", 2048, 16,   256, 4,  1 ),
+   ATtiny84 => PartInfo( "1E930C", 4096, 32,   512, 4,  1 ),
+
+   ATtiny13 => PartInfo( "1E9007",  512, 16,    64, 4,  0 ),
+   ATtiny25 => PartInfo( "1E9108", 1024, 16,   128, 4,  1 ),
+   ATtiny45 => PartInfo( "1E9206", 2048, 32,   256, 4,  1 ),
+   ATtiny85 => PartInfo( "1E930B", 4096, 32,   512, 4,  1 ),
 );
 
 sub start
 {
    my $self = shift;
 
-   Future->needs_all(
-      $self->power(1),
-      $self->aux(1),
-   )->then( sub {
+   # Allow power to settle before turning on +12V on AUX
+   # Normal serial line overheads should allow enough time here
+
+   $self->power(1)->then( sub {
+      $self->aux(1)
+   })->then( sub {
       $self->read_signature;
    })->then( sub {
       my ( $sig ) = @_;
       $sig = uc unpack "H*", $sig;
 
-      $SIGNATURES{$_} eq $sig and $self->{part} = $_, return Future->done( $self )
-         for keys %SIGNATURES;
+      my $partinfo;
+      my $part;
+      ( $partinfo = $PARTS{$_} )->signature eq $sig and $part = $_, last
+         for keys %PARTS;
 
-      Future->fail( "Unrecognised signature $sig" );
+      defined $part or return Future->fail( "Unrecognised signature $sig" );
+
+      $self->{part}     = $part;
+      $self->{partinfo} = $partinfo;
+
+      # ARRAYref so we keep this nice order
+      $self->{memories} = [
+         #                          ws ps nw wr
+         signature   => MemoryInfo(  8, 3, 3, 0 ),
+         calibration => MemoryInfo(  8, 1, 1, 0 ),
+         lock        => MemoryInfo(  8, 1, 1, 1 ),
+         lfuse       => MemoryInfo(  8, 1, 1, 1 ),
+         hfuse       => MemoryInfo(  8, 1, 1, 1 ),
+         ( $partinfo->has_efuse ?
+            ( efuse  => MemoryInfo(  8, 1, 1, 1 ) ) :
+            () ),
+         flash       => MemoryInfo( 16, $partinfo->flash_pagesize, $partinfo->flash_words, 1 ),
+         eeprom      => MemoryInfo(  8, $partinfo->eeprom_pagesize, $partinfo->eeprom_words, 1 ),
+      ];
+
+      return Future->done( $self );
    });
 }
 
@@ -169,6 +203,66 @@ sub partname
 {
    my $self = shift;
    return $self->{part};
+}
+
+=head2 $memory = $avr->memory_info( $name )
+
+Returns a memory info structure giving details about the named memory for the
+attached part. The following memory names are recognised:
+
+ signature calibration lock lfuse hfuse efuse flash eeprom
+
+(Note that the F<ATtiny13> has no C<efuse> memory).
+
+The structure will respond to the following methods:
+
+=over 4
+
+=item * wordsize
+
+Returns number of bits per word. This will be 8 for the byte-oriented
+memories, but 16 for the main program flash.
+
+=item * pagesize
+
+Returns the number of words per page; the smallest amount that can be
+written in one go.
+
+=item * words
+
+Returns the total number of words that are available.
+
+=item * can_write
+
+Returns true if the memory type can be written (in general; this does not take
+into account the lock bits that might futher restrict a particular chip).
+
+=back
+
+=cut
+
+sub memory_info
+{
+   my $self = shift;
+   my ( $name ) = @_;
+
+   my $memories = $self->{memories};
+   $memories->[$_*2] eq $name and return $memories->[$_*2 + 1]
+      for 0 .. $#$memories/2;
+
+   die "$self->{part} does not have a $name memory";
+}
+
+=head2 %memories = $avr->memory_infos
+
+Returns a key/value list of all the known device memories.
+
+=cut
+
+sub memory_infos
+{
+   my $self = shift;
+   return @{ $self->{memories} };
 }
 
 sub _transfer
@@ -388,6 +482,9 @@ sub read_fuse_byte
 
    my $sii = $SII_FOR_FUSE_READ{$fuse} or croak "Unrecognised fuse type '$fuse'";
 
+   $fuse eq "efuse" and !$self->{partinfo}->has_efuse and
+      croak "This part does not have an 'efuse'";
+
    $self->_transfer( CMD_RFUSE, HVSP_CMD )
       ->then( sub { $self->_transfer( 0, $sii ) } )
       ->then( sub { $self->_transfer( 0, $sii|HVSP_ORM ) } )
@@ -411,6 +508,9 @@ sub write_fuse_byte
    my ( $fuse, $byte ) = @_;
 
    my $sii = $SII_FOR_FUSE_WRITE{$fuse} or croak "Unrecognised fuse type '$fuse'";
+
+   $fuse eq "efuse" and !$self->{part}->has_efuse and
+      croak "This part does not have an 'efuse'";
 
    $self->_transfer( CMD_WFUSE, HVSP_CMD )
       ->then( sub { $self->_transfer( $byte, HVSP_LLB ) })
@@ -450,13 +550,6 @@ foreach my $fuse (qw( lfuse hfuse efuse )) {
    };
 }
 
-my %FLASH_SIZES = (
-   # Part   => [ $words/page, $pages ]
-   ATtiny24 => [ 16,          64 ],
-   ATtiny44 => [ 32,          64 ],
-   ATtiny84 => [ 32,         128 ],
-);
-
 =head2 $bytes = $avr->read_flash( %args )->get
 
 Reads a range of the flash memory and returns it as a binary string.
@@ -485,13 +578,11 @@ sub read_flash
    my $self = shift;
    my %opts = @_;
 
-   my $part = $self->{part} or croak "Cannot ->read_flash of an unrecognised part";
-   my ( $nwords, $npages ) = @{ $FLASH_SIZES{$part} };
+   my $partinfo = $self->{partinfo} or croak "Cannot ->read_flash of an unrecognised part";
 
    my $start = $opts{start} // 0;
    my $stop  = $opts{stop}  //
-      $opts{bytes} ? $start + ( $opts{bytes}/2 )
-         : ( $nwords * $npages );
+      $opts{bytes} ? $start + ( $opts{bytes}/2 ) : $partinfo->flash_words;
 
    my $bytes = "";
 
@@ -529,19 +620,18 @@ sub write_flash
    my $self = shift;
    my ( $bytes ) = @_;
 
-   my $part = $self->{part} or croak "Cannot ->write_flash of an unrecognised part";
-   my ( $nwords, $npages )= @{ $FLASH_SIZES{$part} };
-   my $nbytes = $nwords * 2; # words are 16-bits
+   my $partinfo = $self->{partinfo} or croak "Cannot ->write_flash of an unrecognised part";
+   my $nbytes_page = $partinfo->flash_pagesize * 2; # words are 2 bytes
 
-   croak "Cannot write - too large" if length $bytes > $nbytes * $npages;
+   croak "Cannot write - too large" if length $bytes > $partinfo->flash_words * 2;
 
    $self->_transfer( CMD_WFLASH, HVSP_CMD )->then( sub {
-      my @chunks = $bytes =~ m/(.{1,$nbytes})/gs;
+      my @chunks = $bytes =~ m/(.{1,$nbytes_page})/gs;
       my $addr = 0;
 
       repeat {
          my $thisaddr = $addr;
-         $addr += $nwords;
+         $addr += $partinfo->flash_pagesize;
 
          $self->_write_flash_page( $_[0], $thisaddr )
       } foreach => \@chunks;
@@ -580,13 +670,6 @@ sub _write_flash_page
       ->then( sub { $self->_await_SDO_high });
 }
 
-my %EEPROM_SIZES = (
-   # Part   => [ $words/page, $pages ]
-   ATtiny24 => [ 4,           32 ],
-   ATtiny44 => [ 4,           64 ],
-   ATtiny84 => [ 4,          128 ],
-);
-
 =head2 $bytes = $avr->read_eeprom( %args )->get
 
 Reads a range of the EEPROM memory and returns it as a binary string.
@@ -614,13 +697,11 @@ sub read_eeprom
    my $self = shift;
    my %opts = @_;
 
-   my $part = $self->{part} or croak "Cannot ->read_eeprom of an unrecognised part";
-   my ( $nwords, $npages ) = @{ $EEPROM_SIZES{$part} };
+   my $partinfo = $self->{partinfo} or croak "Cannot ->read_eeprom of an unrecognised part";
 
    my $start = $opts{start} // 0;
    my $stop  = $opts{stop}  //
-      $opts{bytes} ? $start + $opts{bytes}
-         : ( $nwords * $npages );
+      $opts{bytes} ? $start + $opts{bytes} : $partinfo->eeprom_words;
 
    my $bytes = "";
 
@@ -655,18 +736,19 @@ sub write_eeprom
    my $self = shift;
    my ( $bytes ) = @_;
 
-   my $part = $self->{part} or croak "Cannot ->write_eeprom of an unrecognised part";
-   my ( $nwords, $npages ) = @{ $EEPROM_SIZES{$part} };
+   my $partinfo = $self->{partinfo} or croak "Cannot ->write_eeprom of an unrecognised part";
 
-   croak "Cannot write - too large" if length $bytes > $nwords * $npages;
+   croak "Cannot write - too large" if length $bytes > $partinfo->eeprom_words;
+
+   my $nwords_page = $partinfo->eeprom_pagesize;
 
    $self->_transfer( CMD_WEEP, HVSP_CMD )->then( sub {
-      my @chunks = $bytes =~ m/(.{1,$nwords})/gs;
+      my @chunks = $bytes =~ m/(.{1,$nwords_page})/gs;
       my $addr = 0;
 
       repeat {
          my $thisaddr = $addr;
-         $addr += $nwords;
+         $addr += $nwords_page;
 
          $self->_write_eeprom_page( $_[0], $thisaddr )
       } foreach => \@chunks;
@@ -700,6 +782,17 @@ sub _write_eeprom_page
       ->then( sub { $self->_transfer( 0, HVSP_WLB|HVSP_ORM ) })
       ->then( sub { $self->_await_SDO_high });
 }
+
+=head1 SEE ALSO
+
+=over 4
+
+=item *
+
+L<http://dangerousprototypes.com/2014/10/27/high-voltage-serial-programming-for-avr-chips-with-the-bus-pirate/> -
+High voltage serial programming for AVR chips with the Bus Pirate.
+
+=back
 
 =head1 AUTHOR
 

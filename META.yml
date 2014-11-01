@@ -14,9 +14,10 @@ name: Device-BusPirate-Chip-AVR_HVSP
 provides:
   Device::BusPirate::Chip::AVR_HVSP:
     file: lib/Device/BusPirate/Chip/AVR_HVSP.pm
-    version: '0.01'
+    version: '0.02'
 requires:
   Device::BusPirate::Chip: '0'
+  Struct::Dumb: '0'
 resources:
   license: http://dev.perl.org/licenses/
-version: '0.01'
+version: '0.02'
